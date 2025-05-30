@@ -1,11 +1,10 @@
 pub mod types;
 pub mod utils;
 
-use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use solana_sdk::{
     pubkey::Pubkey,
-    signature::{Signature, Signer},
+    signature::Signature,
 };
 use std::str::FromStr;
 
@@ -48,6 +47,7 @@ impl PrivyConfig {
             wallet_id: self.wallet_id.ok_or(PrivyError::MissingConfig("wallet_id"))?,
             api_base_url: "https://api.privy.io/v1".to_string(),
             client: reqwest::Client::new(),
+            public_key: None, // Will be populated by init()
         })
     }
 }
@@ -61,7 +61,20 @@ impl PrivySigner {
             wallet_id,
             api_base_url: "https://api.privy.io/v1".to_string(),
             client: reqwest::Client::new(),
+            public_key: None,
         }
+    }
+    
+    /// Initialize the signer by fetching the public key
+    pub async fn init(&mut self) -> Result<(), PrivyError> {
+        let pubkey = self.get_public_key().await?;
+        self.public_key = Some(pubkey);
+        Ok(())
+    }
+    
+    /// Get the cached public key (like tk-rs does)
+    pub fn solana_pubkey(&self) -> Pubkey {
+        self.public_key.expect("PrivySigner not initialized. Call init() first.")
     }
     
     /// Get the Basic Auth header value
@@ -131,56 +144,6 @@ impl PrivySigner {
     }
 }
 
-// For compatibility with code expecting a blocking Signer trait
-pub struct PrivySignerBlocking {
-    inner: PrivySigner,
-    runtime: tokio::runtime::Runtime,
-    cached_pubkey: Option<Pubkey>,
-}
-
-impl PrivySignerBlocking {
-    pub fn new(signer: PrivySigner) -> Result<Self, PrivyError> {
-        let runtime = tokio::runtime::Runtime::new()
-            .map_err(|e| PrivyError::ApiError(500))?; // Convert to appropriate error
-            
-        // Pre-fetch the public key
-        let cached_pubkey = runtime.block_on(signer.get_public_key())?;
-        
-        Ok(Self {
-            inner: signer,
-            runtime,
-            cached_pubkey: Some(cached_pubkey),
-        })
-    }
-}
-
-impl Signer for PrivySignerBlocking {
-    fn pubkey(&self) -> Pubkey {
-        self.cached_pubkey.expect("Public key not initialized")
-    }
-    
-    fn try_pubkey(&self) -> Result<Pubkey, solana_sdk::signer::SignerError> {
-        self.cached_pubkey.ok_or(solana_sdk::signer::SignerError::Custom(
-            "Public key not initialized".to_string()
-        ))
-    }
-    
-    fn sign_message(&self, message: &[u8]) -> Signature {
-        self.runtime
-            .block_on(self.inner.sign_transaction(message))
-            .expect("Failed to sign message")
-    }
-    
-    fn try_sign_message(&self, message: &[u8]) -> Result<Signature, solana_sdk::signer::SignerError> {
-        self.runtime
-            .block_on(self.inner.sign_transaction(message))
-            .map_err(|e| solana_sdk::signer::SignerError::Custom(e.to_string()))
-    }
-    
-    fn is_interactive(&self) -> bool {
-        false
-    }
-}
 
 #[cfg(test)]
 mod tests {
