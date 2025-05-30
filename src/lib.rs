@@ -72,7 +72,7 @@ impl PrivySigner {
         Ok(())
     }
     
-    /// Get the cached public key (like tk-rs does)
+    /// Get the cached public key 
     pub fn solana_pubkey(&self) -> Pubkey {
         self.public_key.expect("PrivySigner not initialized. Call init() first.")
     }
